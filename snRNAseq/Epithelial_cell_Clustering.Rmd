@@ -1,0 +1,221 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+Load packages
+```{r}
+library(Seurat)
+library(tidyverse)
+```
+
+Raw data is deposited on  10.5281/zenodo.14229565. This notebook includes analysis for the epithelial nuclei.
+
+Quality checks:
+
+```{r}
+epi.int@assays
+```
+
+```{r}
+DimPlot(epi.int, group.by = "orig.ident") + NoAxes()
+```
+
+```{r}
+epi.int@meta.data <- epi.int@meta.data %>% mutate(patient=case_when(
+  orig.ident == "106_FC2_DMSO" ~ "106",
+  orig.ident == "106_Vert" ~ "106",
+  orig.ident == "DMSO_106" ~ "106",
+  orig.ident == "FC2_107" ~ "107",
+  orig.ident == "LT107_DMSO" ~ "107",
+  orig.ident == "LT107_V" ~ "107",
+))
+
+
+```
+
+```{r}
+DimPlot(epi.int, group.by = "patient") + NoAxes()
+```
+
+Summarise the number of nuclei in each original sample.
+```{r}
+epi.int@meta.data %>% mutate (orig.ident = as.factor(orig.ident))%>%  select(orig.ident) %>%  summary()
+
+```
+
+
+```{r}
+meta <- epi.int@meta.data
+```
+
+Normalize the data.
+```{r}
+epi.int <- NormalizeData(epi.int)
+
+```
+Find Variable features.
+```{r}
+epi.int <- FindVariableFeatures(epi.int, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r}
+VariableFeatures(epi.int) %>% head(10) -> top10
+```
+
+```{r}
+VariableFeaturePlot(epi.int) %>% LabelPoints(points = top10, repel = TRUE)
+```
+```{r}
+epi.int <- ScaleData(epi.int, features = head(VariableFeatures(epi.int), 2000))
+```
+
+```{r}
+epi.int <- RunPCA(epi.int, features = VariableFeatures(epi.int))
+```
+
+```{r}
+Idents(epi.int) <- epi.int@meta.data$orig.ident
+DimPlot(epi.int, reduction = "pca")
+```
+
+```{r}
+ElbowPlot(epi.int)
+```
+
+```{r}
+library(harmony)
+set.seed(20240520)
+epi.int <- RunHarmony(epi.int, group.by.vars = "orig.ident", dims.use = 1:17)
+
+```
+
+```{r}
+DimPlot(epi.int, reduction = "harmony")
+ElbowPlot(epi.int, reduction = "harmony")
+```
+
+```{r}
+set.seed(19601025)
+epi.int <- RunUMAP(epi.int, dims = 1:17, reduction = "harmony")
+```
+
+```{r}
+DimPlot(epi.int, reduction = "umap")
+```
+
+```{r}
+set.seed(19601025)
+epi.int <- FindNeighbors(epi.int, dims = 1:17, reduction = "harmony")
+epi.int <- FindClusters(epi.int, resolution = 0.5)
+```
+
+
+```{r}
+DimPlot(epi.int)
+```
+
+```{r}
+DotPlot(epi, features = c("SFTPC", "LAMP3","AGER","HOPX", "KRT7", "RTKN2", "GPRC5A", "SCNN1G")) + theme(axis.text.x = element_text(angle = 90))
+
+```
+```{r}
+DotPlot(epi, features = c("SFTPC", "LAMP3","AGER","HOPX", "KRT7", "RTKN2", "GPRC5A", "SCNN1G", "SCGB3A2", "MUC5AC", "MSLN", "MUC13")) + theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+```{r}
+DotPlot(epi, features = c("SFTPC","KRT8","KRT17","KRT5"),scale = T)
+
+```
+
+```{r}
+FeaturePlot(epi1, features = c("SFTPC","KRT8","KRT17","KRT5", "KRT14"))
+
+```
+
+```{r}
+
+FeaturePlot(epi1, c("BCL2"))
+
+```
+
+```{r}
+FeaturePlot()
+```
+
+
+
+Differential gene expression per cluster
+
+```{r}
+
+differential <- FindAllMarkers(epi)
+
+```
+
+```{r}
+
+for (i in unique(differential$cluster)){
+  print(paste0("cluster ", i, ": "))
+  df <- differential %>% filter(cluster==i) %>% arrange(-avg_log2FC)
+  print(head(df, 20))
+}
+
+
+```
+
+
+```{r}
+DimPlot(epi, group.by = "orig.ident")
+```
+
+```{r}
+FeaturePlot(epi, c("MMP7"))
+```
+
+```{r}
+DimPlot(epi, group.by = "condition2")
+```
+
+
+## Annotating the clusters.
+
+```{r}
+epi1 <- epi
+DimPlot(epi1)
+```
+```{r}
+DotPlot(epi1, c("CCND1","SPP1","CTRAC","SFTPC", "LAMP3", "SCGB3A2"))
+
+```
+```{r}
+DotPlot(epi1, c("CCND1","KRT8", "ANKRD1", "TEAD1", "KRT7"))
+```
+```{r}
+DotPlot(epi1, c("KRT17","KRT5","KRT15","BPIFB1","S100A2"))
+```
+```{r}
+DotPlot(epi1, c("BCL2", "TP53", "TP63", "TP73"))
+```
+```{r}
+Idents(epi1, cells=WhichCells(epi1, idents = c(0,1))) <- "Aberrant Basaloid Like 1"
+Idents(epi1, cells=WhichCells(epi1, idents = c(2,3))) <- "AT1 Cell"
+Idents(epi1, cells=WhichCells(epi1, idents = c(4))) <- "Aberrant Basaloid Like 2"
+Idents(epi1, cells=WhichCells(epi1, idents = c(5))) <- "AT2 Cell"
+Idents(epi1, cells=WhichCells(epi1, idents = c(6))) <- "Basal Cell"
+Idents(epi1, cells=WhichCells(epi1, idents = c(7))) <- "Inflamatory BCs"
+
+```
+
+```{r}
+write.RDS(epi1, "epi-annotated.RDS")
+```
+
+
+
+
+

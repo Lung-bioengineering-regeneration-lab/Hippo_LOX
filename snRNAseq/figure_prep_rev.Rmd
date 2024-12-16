@@ -1,0 +1,318 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(tidyverse)
+library(Seurat)
+library(ggpubr)
+```
+
+```{r}
+epi <- readRDS("epi-annotated.RDS")
+
+DimPlot(epi, group.by = "conditionLabel")
+
+epi$conditionLabel <- epi$condition2
+
+epi@meta.data[epi@meta.data$conditionLabel=="DMSO",]$conditionLabel<-"Vehicle"
+epi@meta.data[epi@meta.data$conditionLabel=="Fibrotic_Cocktail_DMSO",]$conditionLabel<-"FC+Vehicle"
+epi@meta.data[epi@meta.data$conditionLabel=="Fibrotic_Cocktail_Verteporfine",]$conditionLabel<-"FC+VP"
+epi@meta.data$conditionLabel<- factor(epi@meta.data$conditionLabel, levels = c("Vehicle", "FC+Vehicle","FC+VP"))
+
+DimPlot(epi, group.by = "conditionLabel")
+
+```
+
+```{r}
+d <- DimPlot(epi, group.by = "conditionLabel", pt.size = 1) + NoAxes() + ggtitle("")+NoLegend()
+ggsave("Fig6A_top_nolegend.png",d,width=8, height = 6, dpi=300)
+
+epi$newAnnot<- Idents(epi)
+```
+
+```{r}
+dd <- DimPlot(epi, group.by = "newAnnot", pt.size = 1, cols = "Paired") + NoAxes() + ggtitle("")+NoLegend()
+ggsave("Fig6A_celltype_nolegend.png",dd,width=8, height = 6, dpi=300)
+
+```
+
+```{r}
+epi@meta.data %>% group_by(newAnnot, conditionLabel) %>% summarise(count=n())
+```
+```{r}
+epi@meta.data %>% group_by(newAnnot, orig.ident) %>%  summarise(n=n()) %>% mutate(renamed1=gsub("_","-", newAnnot), orig.ident=gsub("_","-", orig.ident))%>% mutate(id= paste0(newAnnot,"_",orig.ident)) %>%  mutate(condition = case_when(
+  orig.ident%in%c("106-FC2-DMSO","FC2-107") ~ "FC_DMSO",
+  orig.ident%in%c("106-Vert","LT107-V") ~ "Verteprofin",
+  orig.ident%in%c("DMSO-106","LT107-DMSO") ~ "DMSO",
+)) -> cell_numbers
+cell_numbers %>% group_by(condition,newAnnot) %>% summarise(n=sum(n))
+included <- cell_numbers[cell_numbers$n>1,]$id
+```
+
+```{r}
+genes <- c("RTKN2", "CNTN6","CYP4B1", "AGER","AQP5",
+           "SFTPA1","SFTPA2", "LRRK2", "SFTPC", "SFTPB", "LRP2", "HHIP", "SCGB3A2",
+           "PROM1","EYA2","SLC26A4","LGALS17A","HOXA3","LTF",
+           "COL6A6","TGFBI", "CDH2","MMp7","PDGFB","FN1", "PRSS2",
+           "CA10", "AREG", "MUC21", "ALOX15B")
+data <- AggregateExpression(object = epi, features = genes, group.by = c("newAnnot", "orig.ident"))
+data <- as.data.frame(data$RNA)
+data <- data[,cell_numbers$id]
+data1 <- as.data.frame(t(apply(data, 1, `/`, cell_numbers$n))) 
+
+
+meta <- data.frame("id"=names(data1))
+meta$Cell <- as.character(lapply(meta$id, function(x) strsplit(x,"_")[[1]][1][1]))
+meta$sample <- as.character(lapply(meta$id, function(x) strsplit(x,"_")[[1]][2][1]))
+meta$Cell <- factor(meta$Cell, levels = c("AT1 Cell","AT2 Cell","Basal Cell","Inflamatory BCs","Aberrant Basaloid Like 1","Aberrant Basaloid Like 2"))
+meta <- meta %>% mutate(condition = case_when(
+  sample%in%c("106-FC2-DMSO","FC2-107") ~ "FC_DMSO",
+  sample%in%c("106-Vert","LT107-V") ~ "Verteprofin",
+  sample%in%c("DMSO-106","LT107-DMSO") ~ "DMSO",
+)) %>% as.data.frame() %>% arrange(condition) %>% arrange(Cell)
+
+rownames(meta) <- meta$id
+meta$id <- NULL
+meta$sample <- NULL
+
+
+#### filtration
+
+ddata <- data1 %>% select(included)
+dmeta <- meta[rownames(meta)%in%included,]
+dmeta$Cell <- factor(dmeta$Cell, levels = c("AT1 Cell","AT2 Cell","Basal Cell","Inflamatory BCs","Aberrant Basaloid Like 1","Aberrant Basaloid Like 2"))
+
+
+#normalize expression
+ldata <- log(ddata+0.1)
+ldata[abs(ldata)==Inf] <-0
+ldata <- ldata[, rownames(dmeta)]
+
+max <- apply(ldata, 1, max)
+min <- apply(ldata, 1, min)
+avg <- rowMeans(ldata)
+ldata <- (ldata-min)/(max-min)
+
+
+library(pheatmap)
+library(viridis)
+dmeta <- dmeta[,c("condition","Cell")]
+
+
+hm <- pheatmap(ldata, cluster_rows = F, cluster_cols = F, 
+         color = colorRampPalette(viridis(7))(100),
+         cellwidth = 20, cellheight = 20,
+         annotation_col = dmeta, 
+         gaps_col = which(diff(as.numeric(factor(dmeta$Cell)))!=0),
+         border_color = NA,
+         show_colnames = F#, filename = "Fig6B.png"
+  )
+
+hm
+
+```
+
+```{r}
+meta <- epi@meta.data
+meta %>% group_by(newAnnot,orig.ident) %>% summarize(count=length(orig.ident)) %>% group_by(orig.ident) %>% mutate(total=sum(count), percent = 100*(count/total)) %>% 
+  mutate(cond = case_when(
+  orig.ident == "106_FC2_DMSO" ~ "FC_DMSO",
+  orig.ident == "106_Vert" ~ "Verteporfin",
+  orig.ident == "DMSO_106" ~ "DMSO",
+  orig.ident == "FC2_107" ~ "FC_DMSO",
+  orig.ident == "LT107_DMSO" ~ "DMSO",
+  orig.ident == "LT107_V" ~ "Verteporfin"
+)) %>% ggplot(aes(x=cond, y=percent, color=cond))+geom_point(size=2)+theme_minimal()+
+       facet_wrap(~newAnnot, strip.position = "left")+
+       labs(color="Conditions")+xlab("") +
+       ylab("Percentage (%)")+expand_limits(y=100)+
+       theme(axis.text.x = element_text(angle = 45,vjust = 0.5))+NoLegend()->plot
+
+plot
+
+ggsave("percentage_plot.png", plot, width = 4, height = 4, dpi=300)
+
+```
+
+```{r}
+loxes <- c("LOX", paste0("LOXL", seq(1:4)))
+
+fplot <- function(x){
+ l <- FeaturePlot(epi, features = c(x)) +NoAxes()
+ggsave(paste0("featurePlots/",x,".png"),plot = l,width = 3, height = 2.5, dpi = 300)
+}
+loxes <- c("LOX")
+for (g in otherGenes1){
+fplot(g)
+}
+```
+
+```{r}
+DotPlot(epi, features = c(loxes), group.by = c("newAnnot"), col.min = 0)+ theme(axis.text.x = element_text(angle = 90)) -> pp
+ggsave("loxes_dotplots.png",plot = pp, dpi=300, bg = "white" )
+```
+
+
+```{r}
+
+genes <- c("KRT5", "KRT17","TP63","ICAM1","LAMP3","LTF","RTKN2","AGER","BCL2","EYA2")
+
+epi@meta.data$newAnnot <- factor(epi@meta.data$newAnnot, levels = rev(c("Aberrant Basaloid Like 1","Aberrant Basaloid Like 2","AT1 Cell","AT2 Cell","Basal Cell","Inflamatory BCs")))
+
+DotPlot(epi, features = c(genes), group.by = c("newAnnot"), col.min = 0)+ theme(axis.text.x = element_text(angle = 90)) -> ppp
+ggsave("marker_genes.png",plot = pp9, dpi=300, bg = "white" )
+
+```
+
+
+
+```{r}
+graphList <- list()
+for (l in loxes){
+  a <- VlnPlot(epi, l, group.by = "newAnnot", split.by = "conditionLabel", idents = c("Aberrant Basaloid Like 1"),cols = c("#1B9E77", "#D95F02", "#7570B3"))+xlab("")+theme(axis.text.x = element_blank())+NoLegend()
+  graphList[[l]]<- a
+  ggsave(filename = paste0("./violinplots/",l,".png"), plot = a, height = 3, width = 2, dpi=300)
+}
+
+otherGenes <- c("YAP1", "TAZ","COL3A1","FN1","MMP7","CPA6","PLD5", "CDH2", "SFTPC", "SFTPA1")
+
+for (l in otherGenes){
+  a <- VlnPlot(epi, l, group.by = "newAnnot", split.by = "conditionLabel", idents = c("Aberrant Basaloid Like 1"),cols = c("#1B9E77", "#D95F02", "#7570B3"))+xlab("")+theme(axis.text.x = element_blank())+NoLegend()
+  graphList[[l]]<- a
+  ggsave(filename = paste0("./violinplots/",l,".png"), plot = a, height = 3, width = 2, dpi=300)
+}
+
+pviolin <- ggarrange(graphList[["TAZ"]], graphList[["YAP1"]],graphList[["LOX"]],graphList[["LOXL1"]],
+          graphList[["LOXL2"]],graphList[["COL3A1"]],graphList[["MMP7"]],graphList[["FN1"]],
+          ncol = 4,nrow = 2)
+
+ggsave("vlnPlot.png",pviolin, width = 11,height = 7,dpi = 300)
+```
+
+```{r}
+otherGenes1 <- c("MMP21","MMP26","MMP7","MMP20","MMP27","MMP8","MMP10","MMP1","MMP12","MMP3","MMP19", "MMP14","MMP2","MMP9","MMP11")
+
+for (l in otherGenes1){
+  a <- VlnPlot(epi, l, group.by = "newAnnot", split.by = "conditionLabel", idents = c("Aberrant Basaloid Like 1"),cols = c("#1B9E77", "#D95F02", "#7570B3"))+xlab("")+theme(axis.text.x = element_blank())+NoLegend()
+  graphList[[l]]<- a
+  ggsave(filename = paste0("./violinplots/",l,".png"), plot = a, height = 3, width = 2, dpi=300)
+}
+
+```
+
+
+```{r}
+ab_de <- FindMarkers(epi, ident.1 = "Aberrant Basaloid Like 1", ident.2 = "Aberrant Basaloid Like 2")
+```
+
+
+
+```{r}
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# Example list of genes
+genes <- rownames(ab_de[ab_de$avg_log2FC>0.5 & ab_de$p_val<0.005,])
+
+# Convert gene symbols to Entrez IDs
+gene_ids <- bitr(genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# Perform GO enrichment analysis
+go_enrich <- enrichGO(gene = gene_ids$ENTREZID,
+                      OrgDb = org.Hs.eg.db,
+                      keyType = "ENTREZID",
+                      ont = "CC",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff = 0.01,
+                      qvalueCutoff = 0.05)
+
+# View results
+print(go_enrich)
+
+# Visualize results
+p <- dotplot(go_enrich, showCategory=5) + theme(text = element_text(size=24))
+
+p
+
+ggsave("dotplot_enrichment.png",p, width = 7, height = 4, dpi=300)
+
+```
+
+```{r}
+gene_ids_top_term <- go_enrich@result[1,]$geneID %>% strsplit("/")
+gene_ids_top_term <- gene_ids_top_term[[1]]
+gene_ids_top_term_symbols <- gene_ids %>% filter(ENTREZID%in%gene_ids_top_term) %>% arrange(SYMBOL)
+
+```
+
+
+```{r}
+##### genes are obtained from the Top Ontology term in the analysis above:
+
+specific_genes <- gene_ids_top_term_symbols$SYMBOL
+
+
+#define function.
+customVolcano <- function(results, fcutoff, pvalcutoff, geneList){
+de <- as.data.frame(results)
+de$diffexpressed <- "NO"
+# if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP" 
+de$diffexpressed[de$avg_log2FC > fcutoff & de$p_val_adj < pvalcutoff] <- "UP"
+# if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+de$diffexpressed[de$avg_log2FC < -fcutoff& de$p_val_adj < pvalcutoff] <- "DOWN"
+
+de$delabel <- NA
+de[rownames(de)%in%geneList,]$delabel <- rownames(de[rownames(de)%in%geneList,])
+a <- ggplot(de, aes(x=avg_log2FC,y=-log10(p_val_adj),
+                    color=diffexpressed, label=delabel)) +
+                    scale_color_manual(values=c("blue", "lightgray", "red"))+
+                    geom_point(alpha=0.4) + 
+                                              #geom_hline(yintercept = -log(pvalcutoff))+
+                    geom_vline(xintercept = c(-fcutoff,fcutoff))+
+                                              
+  geom_label_repel(box.padding = 0.05, segment.colour = "white", segment.curvature = 1,size = 3 )+
+  theme_minimal() + expand_limits(x=c(-6,6),y=350)
+                                              
+a}
+
+a <- customVolcano(ab_de, 0.5, 0.05, specific_genes)+theme_pubr()+NoLegend()+NoGrid()
+ggsave("volcano1.png", plot = a, width = 4, height = 4, dpi=300)
+
+
+
+
+```
+
+
+
+```{r}
+FeaturePlot(epi, c("BCL2"))
+```
+
+
+```{r}
+epic <- epi
+Idents(epic) <- epic@meta.data$conditionLabel
+levels(epic) <- c("FC+VP", "FC+Vehicle", "Vehicle")
+vp_fc <- FindMarkers(epic, ident.1 = "FC+Vehicle", ident.2 = "FC+VP", group_by="newAnnot", subset.ident = "Abarrent Basaloid Like 1")
+saveRDS(vp_fc, "vp_fc.rds")
+write.csv(vp_fc, "vp_fc.csv")
+
+```
+
+
+
+```{r}
+
+intGenes <- c('ABI3BP','ADAM12','ADAMTS10','ADAMTS19','ADAMTS6','ALKAL2','ANTXR2','CCL5','CXCL12','CXCL13','CLEC11A','C1QTNF1','CPAMD8','CD44','CDCP1','DSCAM','EPHB1','EPHB6','FBXO45','FAM3C','FRAS1','GFOD1','HHIPL1','KISS1','LIF','LYPD3','LYPD6B','MAMDC2','OFD1','S100A13','ST8SIA2','TNFRSF11B','TNFRSF25','WNT2','WNT3','WNT5A','WNT5B','WNT7B','ABHD15','ACHE','ACTR1B','ACTN1','AMPD3','ADM2','AMTN','ARTN','BMP2','BMP7','CABYR','CA6','CEL','CPXM2','CTF1','CTSV','CEMIP','CSPG5','C1orf35','C1orf54','C1orf56','C15orf61','C17orf67','C6orf120','CELA2B','COTL1','F5','COCH','CCDC126','CTHRC1','COL4A2','COL9A2','COL6A2','COL6A6','COL7A1','COL8A2','COL13A1','COL19A1','COL16A1','COL17A1','COL25A1','COLEC10','CSF2','DLL1','DNAAF2','DNAI1','ENPP6','ENPP5','ENDOD1','EDN1','EDN2','EREG','EPOR','FGF1','FGF2','FGF5','FGFBP3','FGFR1','FN1','FDCSP','FRZB','GSN','GATD1','GPC2','GDF5','GBP1','HEBP2','HSPG2','HABP4','INHBA','IGFBP2','IGFBP7','ITIH5','IL11RA','IL11','IL17RB','IL23A','IL24','IL33','IL6','JAG1','KIRREL3','LAD1','LAMA1','LAMB1','LAMC2','LTBP1','LTBP4','LIPG','LYG1','LOXL1','MST1','MATN3','MATN4','MMP1','MMP10','MMP2','MMP3','MMP8','MMP9','MAPT','MDK','MUC15','MEGF6','NPPB','NGF','NTN1','NTNG2','NCAM1','NEGR1','NTM','NPIPB15','ODAPH','PAPPA','PAPPA2','PTX3','PYY','PRXL2A','PLA2R1','PLAU','PDGFC','PDGFB','PTN','PLXDC1','PAEP','PDCD1LG2','PRLR','PRELP','PSMD2','RECK','SCCPDH','SCT','SCG5','PRSS1','PRSS2','STK36','SERPINB2','SERPINE1','SERPINE2','SPAG6','SPATA20','SVEP1','STX1A','TECTA','TNC','TSLP','TLL1','TGFB2','TGFBI','TUFT1','TNF','UCN2','UTS2B','VEGFA','VEGFC','VASH2','VCAN','VAT1','CHI3L1','COL1A2','COL4A3','COL4A4','EMILIN1','FBN2','HMCN1','LAMA3','LAMA4','LAMA5','LTBP3','LUM', 'PDL5')
+
+v <- customVolcano(vp_fc, 0.5, 0.05, intGenes)+theme_pubr()+NoLegend()+NoGrid()
+ggsave("volcano2.png", plot = v, width = 4, height = 4, dpi=300)
+
+```
+
+
+
+
