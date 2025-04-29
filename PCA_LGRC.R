@@ -50,8 +50,8 @@ theme <-
     axis.line.x = element_line(),
     axis.line.y = element_line())
 PCA_white <- PCAplot + theme_bw() + theme(legend.direction = 'horizontal', legend.position = "top", legend.text = element_text(size=12), legend.key.size = unit(1, 'cm'), legend.key.height = unit(1, 'cm'), legend.key.width = unit(0.5, 'cm')) + theme +  geom_hline(yintercept=0, alpha=0.4) + geom_vline(xintercept=0, alpha=0.4) 
-PCA_axis <- PCA_white + theme(axis.title = element_text(size = 12, color = "black", face = "bold"), 
-                              axis.text = element_text(color = "black", size=10, face = NULL))
+PCA_axis <- PCA_white + theme(axis.title = element_text(size = 14, color = "black", face = "bold"), 
+                              axis.text = element_text(color = "black", size=12, face = NULL))
 # display PCA plot
 print(PCA_axis)
 
@@ -61,7 +61,5 @@ PCA_colors <- PCA_axis + scale_color_manual(values = c("COPD" = "#FFB000","CTRL"
 # display updated PCA plot
 print(PCA_colors)
 
-# save file (PCA_size)
-tiff(filename = "final.tiff", width = 3200, height = 1200, res=400)
-plot(PCA_colors)
-dev.off()
+# save file (PCA_colors)
+ggsave("1D.tiff", plot = last_plot(), width = 5, height = 4, dpi = 400)
